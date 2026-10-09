@@ -26,8 +26,8 @@ from sklearn.model_selection import RandomizedSearchCV, TimeSeriesSplit
 from sklearn.feature_selection import VarianceThreshold
 
 from scipy.stats import loguniform, randint
+from scipy.special import expit
 
-#different training methods
 
 #the indexation of the dataset starts at 1 then if you want to start the training from the beginning put start_train=1
 #then if end_train=start_test-1 there is no step between train and test
@@ -207,7 +207,6 @@ def train_withoutX(Y, start_train, end_train, start_test, end_test, basemodel, s
     
     return y_test, y_pred
 
-#load dataset
 
 def load_dataset(name):
     if name == "daily-climate":
@@ -252,8 +251,6 @@ def load_player(df,player):
     df_player= df_player[[col for col in df_player.columns if col != 'Y'] + ['Y']]
     return df_player
 
-# relevance-aware functions
-
 def quadratic_asym(a,b,alpha):
     # a and b are the coefficient with which you will divide q to choose the points where f=0 and f=1 
     # ie choose x and x' such as x=-q/a and x'=q/b where f(x)=0 and f(x')=1
@@ -297,7 +294,7 @@ def quadratic_symright(b,alpha):
     return quadratic
 
 def sigmoid(x):
-    return 1 / (1 + np.exp(-x))
+    return expit(x)
 
 #mean as an argument to be general in the file "methods" (our function needs it)
 def dev_sigmoid_c(c):
@@ -323,8 +320,6 @@ def dev_f_w_v(w,v,alpha):
         z=a[:, None] * x + b[:, None]
         return np.sum(w[:, None] * a[:, None] * sigmoid(z) * (1-sigmoid(z)), axis=0) #use of form sig(1-sig) for numeric computation
     return dev_sum
-
-# exe train+OCP
 
 def exe(dataset, start_train, end_train, start_test, end_test, basemodel, name_method, alpha, is_X,sliding=True,**kwargs):
     train_size=end_train-start_train+1
@@ -449,8 +444,6 @@ def exe_player(df_player, name_player, start_train, end_train, start_test, end_t
         result={"y_lowers":y_lowers, "y_uppers":y_uppers, "y_test":y_test, "y_pred":y_pred, "err":err}
     return result
 
-#PLOT
-
 def plot_exp(filename,results,name_methods,method_to_title):
     color_plot = {'coverage': '#377eb8','size': '#4daf4a'}
     fig, axs = plt.subplots(2,len(name_methods), figsize=(6,6))
@@ -459,11 +452,10 @@ def plot_exp(filename,results,name_methods,method_to_title):
     max_width = np.ceil(np.stack(widths).max()) if np.stack(widths).max()>=0 else np.floor(np.stack(widths).max()) 
     for i,method in enumerate(results.keys()):
         cov=1-results[method]['err']
-        cov_moving_avg=[cov[:j].sum()/len(cov[:j]) for j in range(1,len(cov)+1)]
+        cov_moving_avg=[cov[:i].sum()/len(cov[:i]) for i in range(1,len(cov)+1)]
         width=results[method]['y_uppers']-results[method]['y_lowers']
         axs[0,i].scatter(range(len(width)),width,c=color_plot['size'],marker='.',s=5)
         axs[1,i].scatter(range(len(cov_moving_avg)),cov_moving_avg,c=color_plot['coverage'],marker='.',s=5)
-        axs[1,i].axhline(0.9,linestyle='--',color='black',linewidth=1)
         axs[0,i].set_ylim(min_width*0.9, max_width*1.1)
         axs[1,i].set_ylim(-0.05,1.05)
         axs[0,i].set_title(f'{method_to_title[method]}')
@@ -476,19 +468,17 @@ def plot_exp(filename,results,name_methods,method_to_title):
     print('Figure saved')
     plt.show()
 
-def means_exp(result,burnin=None,only_correct_intervals=False):
+def means_exp(result,burnin=None):
     cov=1-result['err']
     width=result['y_uppers']-result['y_lowers']
     if burnin:
         cov=cov[burnin-1:]
         width=width[burnin-1:]
-    if only_correct_intervals:
-        mask = (cov == 1)
-        width = width[mask]
     cov_mean=cov.mean()
     width_mean=width.sum()/len(width)
     width_median=statistics.median(width)
-    return cov_mean,width_mean, width_median
+    width_std=statistics.stdev(width)
+    return cov_mean,width_mean, width_median, width_std
 
 def plot_evolution(result, filename=None):
     y_test = result['y_test']
@@ -501,6 +491,7 @@ def plot_evolution(result, filename=None):
     plt.fill_between(range(len(y_test)), y_lower, y_upper, color='#4fa8c8', alpha=0.2, label='Prediction interval')
     plt.xlabel('Time (sessions)')
     plt.ylabel('Heart Rate')
+    plt.title('Prediction Intervals Evolution')
     plt.legend()
     plt.grid(True, alpha=0.3)
     if filename:
@@ -508,12 +499,11 @@ def plot_evolution(result, filename=None):
         print('Figure saved')
     plt.show()
 
-def plot_interval_widths_by_player(rows,filename,methods=None):
+def plot_interval_widths_3methods(rows,filename,methods=None,players=None):
     df=pd.DataFrame(rows)
-    if methods:
-        df_update=df[df['method'].isin(methods)]
-    else:
-        df_update=df
+    df_update=df[df["method"].isin(methods)].copy() if methods else df.copy()
+    if players:
+        df_update=df_update[df_update["player"].isin(players)].copy()
     palette={
     "PID":"#1f77b4",              
     "r-aPID":"#ff7f0e",           
@@ -530,6 +520,7 @@ def plot_interval_widths_by_player(rows,filename,methods=None):
     "r-aECI":"v",
     "ECI":"P"
     }
+    #TODO median
     plt.figure(figsize=(12,6))
     sns.scatterplot(data=df_update,x="player",y="width_median",hue="method",style="method",s=140,palette=palette,markers=markers)
     sns.lineplot(data=df_update,x="player",y="width_median",units="player",estimator=None,color="gray",linewidth=1.5,alpha=0.7)
@@ -542,6 +533,68 @@ def plot_interval_widths_by_player(rows,filename,methods=None):
     plt.savefig(f'results/images/{filename}.svg', bbox_inches='tight')
     plt.show()
 
+
+def plot_difference_by_player(rows,filename,methods,players=None):
+    assert len(methods)==2,'pair comparison'
+    df=pd.DataFrame(rows)
+    df_update=df[df["player"].isin(players)].copy() if players else df.copy()
+    df_1=df_update[df_update["method"]==methods[0]].set_index("player")
+    df_2=df_update[df_update["method"]==methods[1]].set_index("player")
+    common_players=[p for p in players if p in df_1.index and p in df_2.index] if players else list(set(df_1.index)&set(df_2.index))
+    diff=df_1.loc[common_players,"width_mean"].to_numpy()-df_2.loc[common_players,"width_mean"].to_numpy()
+    x=np.arange(len(common_players))
+    plt.figure(figsize=(12,6))
+    plt.axhline(0,color="black",linewidth=1,linestyle="--",zorder=1)
+    plt.scatter(x,diff,color="black",marker="o",s=60,zorder=2,label=f"{methods[0]} − {methods[1]}")
+    plt.xticks(x,common_players,rotation=90)
+    plt.ylabel(f"Difference in mean interval width")
+    plt.xlabel("")
+    plt.grid(True,axis="y",alpha=0.3)
+    plt.legend(loc="upper left")
+    plt.tight_layout()
+    plt.savefig(f"results/images/{filename}.svg",bbox_inches="tight")
+    plt.show()
+
+def plot_interval_widths_by_player(rows,filename,players=None,methods=None):
+    df=pd.DataFrame(rows)
+    df_update=df[df["method"].isin(methods)].copy() if methods else df.copy()
+    if players:
+        df_update=df_update[df_update["player"].isin(players)].copy()
+    palette={"PID":"#1f77b4","r-aPID":"#ff7f0e","PID Equation (8)":"#8a3bd5","PID Equation (9)":"#f550b3","r-aECI":"#2ca02c","ECI":"#d62728"}
+    markers={"PID":"o","r-aPID":"X","PID Equation (8)":"s","PID Equation (9)":"^","r-aECI":"v","ECI":"P"}
+    player_spacing=2
+    method_spacing=0.12
+    plt.figure(figsize=(12,6))
+    n_methods=len(methods)
+    offsets=np.linspace(-(n_methods-1)*method_spacing,(n_methods-1)*method_spacing,n_methods) if n_methods>1 else [0]
+    method_offsets=dict(zip(methods,offsets))
+    player_to_x={player:i*player_spacing for i,player in enumerate(players)}
+    for i,method in enumerate(methods):
+        df_method=df_update[df_update["method"]==method].copy()
+        x=np.array([player_to_x[player]+method_offsets[method] for player in df_method["player"]])
+        mean=df_method["width_mean"].to_numpy()
+        std=df_method["width_std"].to_numpy()
+        color=palette[method]
+        marker=markers[method]
+        plt.errorbar(x,mean,yerr=std,fmt=marker,color=color,ecolor=color,markersize=9,elinewidth=1.5,capsize=4,markeredgewidth=1,label=method,linestyle="none",zorder=2)
+        for xi,yi,si,coverage in zip(x,mean,std,df_method["coverage"]):
+            if i%2==0:
+                plt.annotate(f"cov: {coverage:.1%}",xy=(xi,yi+si),xytext=(0,5),textcoords="offset points",ha="center",va="bottom",fontsize=8,color=color,zorder=3)
+            else:
+                plt.annotate(f"cov: {coverage:.1%}",xy=(xi,yi-si),xytext=(0,-5),textcoords="offset points",ha="center",va="top",fontsize=8,color=color,zorder=3)
+    player_positions=[player_to_x[player] for player in players]
+    plt.xticks(player_positions,players,rotation=90,ha="center")
+    margin=player_spacing*0.6
+    plt.xlim(player_positions[0]-margin,player_positions[-1]+margin)
+    plt.xlabel("")
+    plt.ylabel("Mean interval width ± std")
+    plt.grid(True,axis="y",alpha=0.3)
+    plt.legend(loc="upper left")
+    plt.tight_layout()
+    plt.savefig(f"results/images/{filename}.svg",bbox_inches="tight")
+    plt.show()
+
+
 if __name__ == "__main__":
     # import random
     # data=load_dataset("daily-climate")
@@ -553,3 +606,310 @@ if __name__ == "__main__":
     # df = pd.read_csv('./datasets/djia.csv')
     # print(set(df['Name']))
     print(load_player('MHSC-45'))
+
+
+
+
+#First draft of scorecaster
+
+# scores[t]=np.abs(y_test_t-y_pred_t)
+#         curr_scores = np.nan_to_num(scores[:t]) 
+#         if scoremodel == 'Theta':
+#             model = ThetaModel(curr_scores.astype(float)).fit()
+#             scorecasts[t+1] = model.forecast()
+#         elif scoremodel == 'AR':
+#             model = AutoReg(curr_scores.astype(float),lags=3).fit()
+#             scorecast_t = model.predict(start=len(curr_scores)+ahead,end=len(curr_scores)+ahead)
+#             print(scorecast_t)
+#             scorecasts[t+1] = scorecast_t[0]
+
+
+# def plot_interval_widths_by_player(rows, filename, methods=None):
+
+#     df = pd.DataFrame(rows)
+
+#     if methods:
+#         df_update = df[df["method"].isin(methods)].copy()
+#     else:
+#         df_update = df.copy()
+
+#     palette = {
+#         "PID": "#1f77b4",
+#         "r-aPID": "#ff7f0e",
+#         "PID Equation (8)": "#8a3bd5",
+#         "PID Equation (9)": "#f550b3",
+#         "r-aECI": "#2ca02c",
+#         "ECI": "#d62728"
+#     }
+
+#     markers = {
+#         "PID": "o",
+#         "r-aPID": "X",
+#         "PID Equation (8)": "s",
+#         "PID Equation (9)": "^",
+#         "r-aECI": "v",
+#         "ECI": "P"
+#     }
+
+#     # =========================
+#     # Paramètres d'espacement
+#     # =========================
+
+#     player_spacing = 2.0
+#     method_spacing = 0.12
+
+#     players = list(df_update["player"].unique())
+
+#     methods_present = [
+#         method for method in palette
+#         if method in df_update["method"].unique()
+#     ]
+
+#     n_methods = len(methods_present)
+
+#     if n_methods > 1:
+#         offsets = np.linspace(
+#             -(n_methods - 1) * method_spacing,
+#             (n_methods - 1) * method_spacing,
+#             n_methods
+#         )
+#     else:
+#         offsets = [0]
+
+#     method_offsets = dict(zip(methods_present, offsets))
+
+#     player_to_x = {
+#         player: i * player_spacing
+#         for i, player in enumerate(players)
+#     }
+
+#     # =========================
+#     # Figure + deux axes Y
+#     # =========================
+
+#     fig_width = max(14, len(players) * 1.3)
+
+#     fig, ax1 = plt.subplots(figsize=(fig_width, 7))
+#     ax2 = ax1.twinx()
+
+#     # =========================
+#     # WIDTH — axe gauche
+#     # =========================
+
+#     for method in methods_present:
+
+#         df_method = df_update[
+#             df_update["method"] == method
+#         ].copy()
+
+#         x = np.array([
+#             player_to_x[player] + method_offsets[method]
+#             for player in df_method["player"]
+#         ])
+
+#         mean = df_method["width_mean"].to_numpy()
+#         std = df_method["width_std"].to_numpy()
+
+#         color = palette[method]
+#         marker = markers[method]
+
+#         # Width = point plein + intervalle mean ± std
+#         ax1.errorbar(
+#             x,
+#             mean,
+#             yerr=std,
+#             fmt=marker,
+#             color=color,
+#             ecolor=color,
+#             markersize=9,
+#             elinewidth=1.5,
+#             capsize=4,
+#             markeredgewidth=1,
+#             markerfacecolor=color,
+#             linestyle="none",
+#             label=method,
+#             zorder=3
+#         )
+
+#     # =========================
+#     # COVERAGE — axe droit
+#     # =========================
+
+#     for method in methods_present:
+
+#         df_method = df_update[
+#             df_update["method"] == method
+#         ].copy()
+
+#         x = np.array([
+#             player_to_x[player] + method_offsets[method]
+#             for player in df_method["player"]
+#         ])
+
+#         coverage = df_method["coverage"].to_numpy()
+
+#         color = palette[method]
+#         marker = markers[method]
+
+#         # Coverage = point vide
+#         ax2.scatter(
+#             x,
+#             coverage,
+#             marker=marker,
+#             s=80,
+#             facecolors="none",
+#             edgecolors=color,
+#             linewidths=1.8,
+#             zorder=4
+#         )
+
+#     # =========================
+#     # Ligne de référence 90%
+#     # =========================
+
+#     ax2.axhline(
+#         0.90,
+#         color="gray",
+#         linestyle="--",
+#         linewidth=1,
+#         alpha=0.6
+#     )
+
+#     # =========================
+#     # Axe X
+#     # =========================
+
+#     player_positions = [
+#         player_to_x[player]
+#         for player in players
+#     ]
+
+#     ax1.set_xticks(player_positions)
+
+#     ax1.set_xticklabels(
+#         players,
+#         rotation=90,
+#         ha="center"
+#     )
+
+#     margin = player_spacing * 0.6
+
+#     ax1.set_xlim(
+#         player_positions[0] - margin,
+#         player_positions[-1] + margin
+#     )
+
+#     # =========================
+#     # Axes Y
+#     # =========================
+
+#     ax1.set_ylabel(
+#         "Mean interval width ± std",
+#         color="black"
+#     )
+
+#     ax2.set_ylabel(
+#         "Coverage",
+#         color="black"
+#     )
+
+#     # -------------------------
+#     # Coverage : échelle réduite
+#     # -------------------------
+
+#     coverage_values = df_update["coverage"].to_numpy()
+
+#     coverage_min = coverage_values.min()
+#     coverage_max = coverage_values.max()
+
+#     coverage_margin = 0.02
+
+#     coverage_lower = max(
+#         0,
+#         coverage_min - coverage_margin
+#     )
+
+#     coverage_upper = min(
+#         1,
+#         coverage_max + coverage_margin
+#     )
+
+#     ax2.set_ylim(
+#         coverage_lower,
+#         coverage_upper
+#     )
+
+#     ax2.yaxis.set_major_formatter(
+#         plt.FuncFormatter(
+#             lambda y, _: f"{y:.0%}"
+#         )
+#     )
+
+#     # =========================
+#     # Grille
+#     # =========================
+
+#     ax1.grid(
+#         True,
+#         axis="y",
+#         alpha=0.3
+#     )
+
+#     # =========================
+#     # Légende
+#     # =========================
+
+#     # Légende des méthodes
+#     method_handles, method_labels = ax1.get_legend_handles_labels()
+
+#     # Handles explicatifs Width / Coverage
+#     width_handle = plt.Line2D(
+#         [],
+#         [],
+#         marker="o",
+#         color="black",
+#         markerfacecolor="black",
+#         linestyle="none",
+#         markersize=8,
+#         label="Width (left axis)"
+#     )
+
+#     coverage_handle = plt.Line2D(
+#         [],
+#         [],
+#         marker="o",
+#         color="black",
+#         markerfacecolor="none",
+#         markeredgecolor="black",
+#         linestyle="none",
+#         markersize=8,
+#         label="Coverage (right axis)"
+#     )
+
+#     ax1.legend(
+#         handles=[
+#             width_handle,
+#             coverage_handle
+#         ] + method_handles,
+#         labels=[
+#             "Width (left axis)",
+#             "Coverage (right axis)"
+#         ] + method_labels,
+#         loc="upper left",
+#         title="Metric / Method"
+#     )
+
+#     # =========================
+#     # Finalisation
+#     # =========================
+
+#     ax1.set_xlabel("")
+
+#     fig.tight_layout()
+
+#     fig.savefig(
+#         f"results/images/{filename}.svg",
+#         bbox_inches="tight"
+#     )
+
+#     plt.show()
